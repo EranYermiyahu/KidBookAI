@@ -2,8 +2,13 @@
 KidBookAI package exposing story generation, pipeline, and PDF tooling.
 """
 
-from .pipeline import KidBookAIOrchestrator, StoryPackage
 from .pdf_generation import StorybookPDFBuilder
+from .pipeline import IllustrationContinuityConfig, KidBookAIOrchestrator, StoryPackage
 
-__all__ = ["KidBookAIOrchestrator", "StoryPackage", "StorybookPDFBuilder"]
+__all__ = [
+    "IllustrationContinuityConfig",
+    "KidBookAIOrchestrator",
+    "StoryPackage",
+    "StorybookPDFBuilder",
+]
 

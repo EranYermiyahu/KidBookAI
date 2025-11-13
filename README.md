@@ -43,6 +43,48 @@ child's reference photo into scene-specific, storybook-quality illustrations.
        print(url)
    ```
 
+### Continuity & Identity Controls
+
+- Use `src/pipeline/continuity.py`'s `IllustrationContinuityConfig` to keep the
+  protagonist and recurring characters consistent across pages.
+- The config feeds deterministic seeds, identity notes, and reference history
+  into the pipeline. Reference history defaults to the `reference_image_history`
+  parameter used by InstantID-style models—override `reference_history_parameter`
+  if your Replicate model expects a different input name.
+- Pass the config when creating the orchestrator:
+
+  ```python
+  from src import IllustrationContinuityConfig, KidBookAIOrchestrator
+
+  continuity = IllustrationContinuityConfig(
+      identity_notes=(
+          "- Light brown skin with warm undertones\n"
+          "- Curly dark hair in a shoulder-length bob\n"
+          "- Hazel eyes with faint freckles"
+      ),
+      supporting_character_notes={
+          "Milo the puppy": "small golden retriever pup, teal bandana",
+          "Grandma Neta": "silver hair in a bun, rounded glasses, lavender cardigan",
+      },
+      static_continuity_notes=[
+          "Keep the child's teal explorer jacket unless the scene explicitly changes wardrobe.",
+      ],
+      reference_history_size=3,
+      promote_latest_reference=True,
+  )
+
+  orchestrator = KidBookAIOrchestrator(continuity_config=continuity)
+  package = orchestrator.run_from_profile_mapping(
+      profile_data,
+      desired_pages=14,
+      reference_image="example_images/laura_girl.jpg",
+  )
+  ```
+
+  The orchestrator now threads the identity snapshot into every prompt, reuses
+  prior illustration URLs as extra references, and keeps deterministic seeds
+  stable unless you override them in `image_kwargs`.
+
 > **Note:** The Replicate model chosen should support identity-preserving
 > image-to-image editing (e.g., InstantID-based workflows).
 

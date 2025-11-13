@@ -5,6 +5,7 @@ Prompt construction utilities for KidBookAI AI image generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping, Sequence
 
 DEFAULT_CAMERA_SHOT = (
     "medium (waist-up), eye-level, natural lens (~65mm), stable flattering perspective"
@@ -29,6 +30,9 @@ def build_storybook_prompt(
     scene_description: str,
     *,
     camera_shot: str | None = None,
+    identity_traits: str | Sequence[str] | None = None,
+    continuity_notes: Sequence[str] | None = None,
+    supporting_cast_notes: Sequence[str] | Mapping[str, str] | None = None,
 ) -> StorybookPrompt:
     """
     Build the structured prompt used to guide the image generation model.
@@ -80,6 +84,52 @@ RENDERING QUALITY
 - Ultra-sharp, print-ready detail; premium filmic contrast; clean shading and reflections; 8K-ready upscale look.
 - Composition keeps the child's face readable and instantly recognizable."""
 
+    extra_sections: list[str] = []
+
+    identity_lines = _normalize_note_input(identity_traits)
+    if identity_lines:
+        extra_sections.append(_format_bullet_section("IDENTITY SNAPSHOT", identity_lines))
+
+    supporting_lines = _normalize_note_input(supporting_cast_notes)
+    if supporting_lines:
+        extra_sections.append(
+            _format_bullet_section("SUPPORTING CAST CONTINUITY", supporting_lines)
+        )
+
+    continuity_lines = _normalize_note_input(continuity_notes)
+    if continuity_lines:
+        extra_sections.append(_format_bullet_section("CONTINUITY NOTES", continuity_lines))
+
+    if extra_sections:
+        positive_prompt = positive_prompt + "\n\n" + "\n\n".join(extra_sections)
+
     return StorybookPrompt(positive=positive_prompt)
+
+
+def _normalize_note_input(
+    value: str | Sequence[str] | Mapping[str, str] | None,
+) -> list[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, Mapping):
+        items = [f"{key}: {details}" for key, details in value.items()]
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        items = [str(item) for item in value]
+
+    lines: list[str] = []
+    for item in items:
+        for raw in item.replace("\r", "\n").split("\n"):
+            cleaned = raw.strip(" \t-•—")
+            if cleaned:
+                lines.append(cleaned)
+    return lines
+
+
+def _format_bullet_section(title: str, lines: Sequence[str]) -> str:
+    bullet_block = "\n".join(f"- {line}" for line in lines if line.strip())
+    return f"{title}\n{bullet_block}"
 
 

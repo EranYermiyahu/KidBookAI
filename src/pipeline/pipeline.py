@@ -22,6 +22,12 @@ from src.story_generation import (
     StoryPageSplitter,
 )
 
+from .continuity import (
+    GenerationContinuityDirectives,
+    IllustrationContinuityConfig,
+    IllustrationContinuityState,
+)
+
 ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
@@ -133,6 +139,7 @@ class KidBookAIOrchestrator:
         page_api_key: str | None = None,
         scene_api_key: str | None = None,
         completion_fn: CompletionCallable | None = None,
+        continuity_config: IllustrationContinuityConfig | None = None,
     ) -> None:
         self._story_generator = story_generator or StoryOutlineGenerator(
             api_key=story_api_key,
@@ -150,6 +157,7 @@ class KidBookAIOrchestrator:
             completion_fn=completion_fn,
         )
         self._image_generator = image_generator or ReplicateImageGenerator()
+        self._continuity_config = continuity_config
 
     def run_from_profile_mapping(
         self,
@@ -270,6 +278,11 @@ class KidBookAIOrchestrator:
         assets: list[PageAsset] = []
         pages_list = list(pages)
         total_pages = len(pages_list)
+        continuity_state = IllustrationContinuityState(
+            profile=profile,
+            base_reference_image=reference_image,
+            config=self._continuity_config,
+        )
         for index, page in enumerate(pages_list, start=1):
             self._notify(
                 progress_callback,
@@ -280,13 +293,32 @@ class KidBookAIOrchestrator:
                 title=page.title,
             )
             scene = self._scene_generator.page_to_scene(page, profile=profile)
+            directives = continuity_state.build_directives(
+                scene=scene,
+                page_number=page.page_number,
+            )
+
+            page_image_kwargs: dict[str, Any] = dict(image_kwargs)
+            for key, value in directives.model_overrides.items():
+                page_image_kwargs.setdefault(key, value)
+            if (
+                directives.reference_history_parameter
+                and directives.additional_reference_images
+                and directives.reference_history_parameter not in page_image_kwargs
+            ):
+                page_image_kwargs[
+                    directives.reference_history_parameter
+                ] = list(directives.additional_reference_images)
+
             image_outputs = self._invoke_image_generation(
                 profile=profile,
                 scene=scene,
-                reference_image=reference_image,
-                image_kwargs=image_kwargs,
+                reference_image=directives.primary_reference_image,
+                continuity_directives=directives,
+                image_kwargs=page_image_kwargs,
             )
             assets.append(PageAsset(page=page, scene=scene, image_outputs=image_outputs))
+            continuity_state.record_generation(scene=scene, image_outputs=image_outputs)
             self._notify(
                 progress_callback,
                 "page:done",
@@ -303,12 +335,20 @@ class KidBookAIOrchestrator:
         scene: SceneDescription,
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any],
+        continuity_directives: GenerationContinuityDirectives,
     ) -> Sequence[str]:
+        model_kwargs = dict(image_kwargs)
+        camera_shot = model_kwargs.pop("camera_shot", None)
+
         outputs = self._image_generator.generate_image(
             kid_name=profile.name,
             scene_description=scene.scene_description,
             input_image=reference_image,
-            **image_kwargs,
+            camera_shot=camera_shot,
+            identity_traits=continuity_directives.identity_notes,
+            continuity_notes=continuity_directives.continuity_notes,
+            supporting_cast_notes=continuity_directives.supporting_cast_notes,
+            **model_kwargs,
         )
         return normalize_image_outputs(outputs)
 
@@ -369,4 +409,3 @@ def normalize_image_outputs(raw: Any) -> list[str]:
         return normalized
 
     return [str(raw)]
-

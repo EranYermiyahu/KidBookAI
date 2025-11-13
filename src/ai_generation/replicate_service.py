@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable
+from typing import Any, BinaryIO, Iterable, Mapping, Sequence
 
 import replicate
 
@@ -65,6 +65,10 @@ class ReplicateImageGenerator:
         input_image: str | Path | BinaryIO,
         camera_shot: str | None = None,
         negative_prompt_override: str | None = None,
+        identity_traits: str | Sequence[str] | None = None,
+        continuity_notes: Sequence[str] | None = None,
+        supporting_cast_notes: Sequence[str] | Mapping[str, str] | None = None,
+        reference_image_history: Sequence[str | Path | BinaryIO] | None = None,
         **model_kwargs: Any,
     ) -> Iterable[Any]:
         """
@@ -82,6 +86,16 @@ class ReplicateImageGenerator:
             Optional override for the camera framing instructions in the prompt.
         negative_prompt_override:
             Optional custom negative prompt to replace the default guardrails.
+        identity_traits:
+            Structured facts about the child (e.g., age, wardrobe notes) that should be restated
+            in the prompt to reinforce likeness preservation.
+        continuity_notes:
+            Carry-over cues from earlier pages to maintain continuity across the story.
+        supporting_cast_notes:
+            Optional list or mapping describing recurring supporting characters and their traits.
+        reference_image_history:
+            Optional iterable of prior illustration references (URLs or file paths) that should
+            reinforce continuity when the underlying model supports multiple references.
         **model_kwargs:
             Additional keyword arguments forwarded directly to the Replicate model invocation.
 
@@ -94,6 +108,9 @@ class ReplicateImageGenerator:
             kid_name=kid_name,
             scene_description=scene_description,
             camera_shot=camera_shot,
+            identity_traits=identity_traits,
+            continuity_notes=continuity_notes,
+            supporting_cast_notes=supporting_cast_notes,
         )
 
         with ExitStack() as stack:
@@ -108,6 +125,12 @@ class ReplicateImageGenerator:
                 ),
                 "image": image_input,
             }
+
+            if reference_image_history:
+                replicate_input["reference_image_history"] = [
+                    _prepare_image_input(item, stack=stack)
+                    for item in reference_image_history
+                ]
 
             # Allow the caller to tweak model-specific knobs (e.g., guidance_scale, seed).
             replicate_input.update(model_kwargs)
