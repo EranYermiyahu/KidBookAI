@@ -4,9 +4,10 @@ Orchestrates the full KidBookAI pipeline from profile to story and images.
 
 from __future__ import annotations
 
+from collections.abc import Iterable as IterableABC
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import yaml
 
@@ -20,6 +21,8 @@ from src.story_generation import (
     StoryPage,
     StoryPageSplitter,
 )
+
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 @dataclass
@@ -70,6 +73,46 @@ class StoryPackage:
     def to_yaml(self) -> str:
         return yaml.safe_dump(self.to_dict(), sort_keys=False, allow_unicode=True)
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "StoryPackage":
+        if "child_profile" not in payload:
+            raise ValueError("Story package payload must include 'child_profile'.")
+        if "pages" not in payload:
+            raise ValueError("Story package payload must include 'pages'.")
+
+        profile = KidProfile.from_mapping(payload["child_profile"])
+        story_markdown = str(payload.get("story_markdown", "")).strip()
+
+        pages_payload = payload.get("pages", [])
+        pages: list[PageAsset] = []
+        for entry in pages_payload:
+            try:
+                page_number = int(entry["page_number"])
+                title = str(entry["title"]).strip()
+                story_text = str(entry["story_text"]).strip()
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid page entry: {entry}") from exc
+
+            story_page = StoryPage(page_number=page_number, title=title, story_text=story_text)
+            scene = SceneDescription(
+                page_number=page_number,
+                scene_description=str(entry.get("scene_description", "")).strip(),
+                supporting_details=str(entry.get("supporting_details", "")).strip(),
+            )
+            raw_outputs = entry.get("image_outputs", [])
+            image_outputs = tuple(normalize_image_outputs(raw_outputs))
+            pages.append(PageAsset(page=story_page, scene=scene, image_outputs=image_outputs))
+
+        return cls(profile=profile, story_markdown=story_markdown, pages=pages)
+
+    @classmethod
+    def from_yaml(cls, source: str | Path) -> "StoryPackage":
+        path = Path(source)
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(data, Mapping):
+            raise ValueError("Story package YAML must deserialize to a mapping.")
+        return cls.from_dict(data)
+
 
 class KidBookAIOrchestrator:
     """
@@ -115,16 +158,25 @@ class KidBookAIOrchestrator:
         desired_pages: int | None = None,
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> StoryPackage:
         """
         Complete pipeline from raw profile mapping to story, pages, scenes, and images.
         """
+        self._notify(progress_callback, "profile:parsing", source="mapping")
         profile = KidProfile.from_mapping(profile_data)
+        self._notify(
+            progress_callback,
+            "profile:ready",
+            name=profile.name,
+            story_language=profile.story_language,
+        )
         return self._run_pipeline(
             profile=profile,
             desired_pages=desired_pages,
             reference_image=reference_image,
             image_kwargs=image_kwargs,
+            progress_callback=progress_callback,
         )
 
     def run_from_profile_file(
@@ -134,17 +186,20 @@ class KidBookAIOrchestrator:
         desired_pages: int | None = None,
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> StoryPackage:
         """
         Load profile data from a YAML or JSON file and run the pipeline.
         """
         profile_path = Path(profile_path)
+        self._notify(progress_callback, "profile:parsing", source=str(profile_path))
         data = _load_mapping_file(profile_path)
         return self.run_from_profile_mapping(
             data,
             desired_pages=desired_pages,
             reference_image=reference_image,
             image_kwargs=image_kwargs,
+            progress_callback=progress_callback,
         )
 
     def _run_pipeline(
@@ -154,25 +209,54 @@ class KidBookAIOrchestrator:
         desired_pages: int | None,
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any] | None,
+        progress_callback: ProgressCallback | None,
     ) -> StoryPackage:
+        self._notify(progress_callback, "story:generating")
         story_markdown = self._story_generator.generate_story(profile)
+        self._notify(
+            progress_callback,
+            "story:generated",
+            word_count=len(story_markdown.split()),
+        )
+
+        self._notify(progress_callback, "pages:splitting")
         pages = self._page_splitter.split_story(
             story_markdown,
             profile=profile,
             desired_pages=desired_pages,
         )
+        total_pages = len(pages)
+        self._notify(progress_callback, "pages:ready", total_pages=total_pages)
+
         page_assets = self._generate_page_assets(
             profile=profile,
             pages=pages,
             reference_image=reference_image,
             image_kwargs=image_kwargs or {},
+            progress_callback=progress_callback,
         )
 
-        return StoryPackage(
+        self._notify(
+            progress_callback,
+            "pipeline:packaging",
+            total_pages=len(page_assets),
+            profile_name=profile.name,
+        )
+
+        package = StoryPackage(
             profile=profile,
             story_markdown=story_markdown,
             pages=page_assets,
         )
+
+        self._notify(
+            progress_callback,
+            "pipeline:complete",
+            total_pages=len(page_assets),
+            profile_name=profile.name,
+        )
+
+        return package
 
     def _generate_page_assets(
         self,
@@ -181,9 +265,20 @@ class KidBookAIOrchestrator:
         pages: Iterable[StoryPage],
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any],
+        progress_callback: ProgressCallback | None,
     ) -> list[PageAsset]:
         assets: list[PageAsset] = []
-        for page in pages:
+        pages_list = list(pages)
+        total_pages = len(pages_list)
+        for index, page in enumerate(pages_list, start=1):
+            self._notify(
+                progress_callback,
+                "page:processing",
+                page_number=page.page_number,
+                page_index=index,
+                total_pages=total_pages,
+                title=page.title,
+            )
             scene = self._scene_generator.page_to_scene(page, profile=profile)
             image_outputs = self._invoke_image_generation(
                 profile=profile,
@@ -192,6 +287,13 @@ class KidBookAIOrchestrator:
                 image_kwargs=image_kwargs,
             )
             assets.append(PageAsset(page=page, scene=scene, image_outputs=image_outputs))
+            self._notify(
+                progress_callback,
+                "page:done",
+                page_number=page.page_number,
+                page_index=index,
+                total_pages=total_pages,
+            )
         return assets
 
     def _invoke_image_generation(
@@ -208,7 +310,16 @@ class KidBookAIOrchestrator:
             input_image=reference_image,
             **image_kwargs,
         )
-        return list(outputs)
+        return normalize_image_outputs(outputs)
+
+    @staticmethod
+    def _notify(
+        callback: ProgressCallback | None,
+        stage: str,
+        **payload: Any,
+    ) -> None:
+        if callback is not None:
+            callback(stage, payload)
 
 
 def _load_mapping_file(path: Path) -> Mapping[str, Any]:
@@ -220,4 +331,42 @@ def _load_mapping_file(path: Path) -> Mapping[str, Any]:
 
         return json.loads(text)
     raise ValueError("Unsupported profile file format. Use YAML or JSON.")
+
+
+def normalize_image_outputs(raw: Any) -> list[str]:
+    """
+    Normalize the image outputs returned by Replicate into a list of URL strings.
+    """
+
+    if raw is None:
+        return []
+
+    if isinstance(raw, str):
+        return [raw]
+
+    if isinstance(raw, bytes):
+        return [raw.decode("utf-8", errors="ignore")]
+
+    if isinstance(raw, IterableABC):
+        collected = list(raw)
+        if not collected:
+            return []
+
+        if all(isinstance(item, str) and len(item) == 1 for item in collected):
+            return ["".join(collected)]
+
+        normalized: list[str] = []
+        for item in collected:
+            if isinstance(item, str):
+                normalized.append(item)
+            elif isinstance(item, bytes):
+                normalized.append(item.decode("utf-8", errors="ignore"))
+            elif isinstance(item, IterableABC):
+                nested = normalize_image_outputs(item)
+                normalized.extend(nested)
+            elif item is not None:
+                normalized.append(str(item))
+        return normalized
+
+    return [str(raw)]
 

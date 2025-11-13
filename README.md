@@ -142,3 +142,24 @@ python scripts/run_full_pipeline.py \
   --reference-image example_images/laura_girl.jpg \
   --output kidbook_package.yaml
 ```
+
+## PDF Layout Block
+
+Once the YAML package is ready, you can render a printable storybook PDF:
+
+- `src/pdf_generation/builder.py` contains `StorybookPDFBuilder`, which arranges a
+  cover, centred story spreads, and illustration spreads in an alternating rhythm.
+- Text pages include only the narrative (`story_text`) styled with colourful read-aloud
+  backgrounds; illustration pages focus solely on the artwork.
+- `scripts/render_story_pdf.py` is a CLI wrapper that downloads the illustration URLs,
+  applies the layout, and writes a high-resolution PDF that is square by default and
+  ready for print-on-demand workflows.
+
+Example usage:
+
+```bash
+python scripts/render_story_pdf.py \
+  --package kidbook_package.yaml \
+  --output kidbook_story.pdf \
+  --page-size square
+```
