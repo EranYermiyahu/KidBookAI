@@ -36,9 +36,11 @@ class IllustrationContinuityConfig:
         Additional always-on continuity reminders injected into the prompt
         (e.g., wardrobe must stay the same).
     carry_reference_image_forward:
-        Whether to retain previously generated illustration URLs for reuse.
+        Whether to retain previously generated illustration URLs for reuse. Disabled by
+        default to avoid unintended wardrobe locking.
     reference_history_size:
-        Maximum number of prior illustration URLs to reuse as references.
+        Maximum number of prior illustration URLs to reuse as references when carrying
+        history forward.
     reference_history_parameter:
         Optional name of the model input parameter that should receive the
         reference history list (e.g., ``reference_images``). When ``None``,
@@ -58,19 +60,23 @@ class IllustrationContinuityConfig:
     auto_seed:
         When True (default), derive a deterministic seed from the child profile
         and reference image. Ignored if ``locked_seed`` is provided.
+    vary_seed_per_page:
+        When True, increment the derived seed per page to create a deterministic
+        sequence. When False (default), reuse a single seed for the full story.
     """
 
     identity_notes: str | None = None
     supporting_character_notes: Mapping[str, str] = field(default_factory=dict)
     static_continuity_notes: Sequence[str] = field(default_factory=tuple)
-    carry_reference_image_forward: bool = True
-    reference_history_size: int = 3
-    reference_history_parameter: str | None = "reference_image_history"
+    carry_reference_image_forward: bool = False
+    reference_history_size: int = 0
+    reference_history_parameter: str | None = None
     promote_latest_reference: bool = False
     propagate_supporting_details: bool = True
     supporting_details_history: int = 2
     locked_seed: int | None = None
     auto_seed: bool = True
+    vary_seed_per_page: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,7 +123,7 @@ class IllustrationContinuityState:
         self._base_reference_image: PathLike = str(base_reference_image)
         history_size = max(0, self._config.reference_history_size)
         supporting_history_size = max(0, self._config.supporting_details_history)
-        self._reference_history: Deque[str] = deque(maxlen=history_size)
+        self._reference_history: Deque[str] = deque(maxlen=history_size or None)
         self._supporting_history: Deque[str] = deque(maxlen=supporting_history_size)
         self._identity_notes = self._config.identity_notes or self._format_identity_notes(
             profile
@@ -160,18 +166,26 @@ class IllustrationContinuityState:
             if self._sanitize(name) and self._sanitize(details)
         ]
 
-        history_list = list(self._reference_history)
         primary_reference: PathLike = self._base_reference_image
         additional_refs: tuple[PathLike, ...] = ()
 
-        if self._config.promote_latest_reference and history_list:
-            primary_reference = history_list[0]
-            history_list = history_list[1:]
-            if self._base_reference_image not in history_list:
-                history_list.append(self._base_reference_image)
+        history_list: list[str] = []
+        if self._config.carry_reference_image_forward:
+            history_list = list(self._reference_history)
+            if self._config.promote_latest_reference and history_list:
+                primary_reference = history_list[0]
+                history_list = history_list[1:]
+                if self._base_reference_image not in history_list:
+                    history_list.append(self._base_reference_image)
 
-        if self._config.carry_reference_image_forward and history_list:
-            additional_refs = tuple(history_list)
+            if history_list:
+                additional_refs = tuple(history_list)
+
+        reference_history_param = (
+            self._config.reference_history_parameter
+            if self._config.carry_reference_image_forward
+            else None
+        )
 
         model_overrides: dict[str, Any] = {}
         seed = self.seed_for_page(page_number)
@@ -184,7 +198,7 @@ class IllustrationContinuityState:
             identity_notes=identity_notes,
             continuity_notes=tuple(filter(None, continuity_notes)),
             supporting_cast_notes=tuple(supporting_cast_notes),
-            reference_history_parameter=self._config.reference_history_parameter,
+            reference_history_parameter=reference_history_param,
             model_overrides=model_overrides,
         )
 
@@ -225,11 +239,13 @@ class IllustrationContinuityState:
             return None
         if self._config.locked_seed is not None:
             return self._base_seed
-        offset = max(page_number - 1, 0)
-        seed = (self._base_seed + offset) % self._seed_mod
-        if seed <= 0:
-            seed = self._base_seed or 1
-        return seed
+        if self._config.vary_seed_per_page:
+            offset = max(page_number - 1, 0)
+            seed = (self._base_seed + offset) % self._seed_mod
+            if seed <= 0:
+                seed = self._base_seed or 1
+            return seed
+        return self._base_seed
 
     @staticmethod
     def _format_identity_notes(profile: KidProfile) -> str | None:

@@ -61,7 +61,12 @@ Edit the input photo(s) to create a high-definition storybook illustration of {k
 IDENTITY LOCK (do not change)
 - Keep the same face shape, eye shape, nose, mouth, skin tone, hair color/style, and overall proportions as in the input image(s).
 - Maintain age and ethnicity exactly. Do not beautify, slim, or exaggerate features. No caricature.
-- Preserve the natural expression and personality cues from the reference (joy, curiosity, calm).
+- Adapt the child's facial expression to fit the scene description while preserving facial likeness; the reference expression is optional.
+
+REFERENCE IMAGE USAGE
+- Use the input photo only to match the child's facial structure, skin tone, eye color, and hair details.
+- Ignore outfits, clothing, shoes, or accessories from the reference image; treat them purely as placeholders.
+- Focus on faithful facial and physical traits. Clothing and footwear can change each scene as long as the face stays consistent.
 
 SCENE (apply to background, wardrobe, pose as needed - do not alter the face)
 - {scene_description}
@@ -78,9 +83,10 @@ LIGHTING & MOOD
 
 ENVIRONMENT & WARDROBE
 - Storybook background matching the scene (enchanted forest / cozy lantern-lit town / futuristic city / starry sky).
-- Wardrobe consistent with the scene (e.g., small superhero cape, explorer outfit); no real-world logos or text.
+- Wardrobe consistent with the scene (e.g., small superhero cape, explorer outfit); do not copy the outfit from the reference photo. No real-world logos or text.
 
 RENDERING QUALITY
+- Must deliver a high-definition, high-quality illustration suitable for large-format print.
 - Ultra-sharp, print-ready detail; premium filmic contrast; clean shading and reflections; 8K-ready upscale look.
 - Composition keeps the child's face readable and instantly recognizable."""
 

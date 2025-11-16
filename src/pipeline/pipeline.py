@@ -38,6 +38,7 @@ class PageAsset:
     page: StoryPage
     scene: SceneDescription
     image_outputs: Sequence[str]
+    image_metadata: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +48,11 @@ class PageAsset:
             "scene_description": self.scene.scene_description,
             "supporting_details": self.scene.supporting_details,
             "image_outputs": list(self.image_outputs),
+            **(
+                {"image_metadata": dict(self.image_metadata)}
+                if self.image_metadata
+                else {}
+            ),
         }
 
 
@@ -71,6 +77,9 @@ class StoryPackage:
                 "personal_notes": self.profile.personal_notes,
                 "story_language": self.profile.story_language,
                 "guardian_name": self.profile.guardian_name,
+                "identity_traits": self.profile.identity_traits,
+                "supporting_characters": dict(self.profile.supporting_characters),
+                "continuity_notes": list(self.profile.continuity_notes),
             },
             "story_markdown": self.story_markdown,
             "pages": [asset.to_dict() for asset in self.pages],
@@ -107,7 +116,19 @@ class StoryPackage:
             )
             raw_outputs = entry.get("image_outputs", [])
             image_outputs = tuple(normalize_image_outputs(raw_outputs))
-            pages.append(PageAsset(page=story_page, scene=scene, image_outputs=image_outputs))
+            metadata = entry.get("image_metadata")
+            if metadata is not None and not isinstance(metadata, Mapping):
+                raise ValueError(
+                    f"Invalid image_metadata for page {page_number}: expected mapping."
+                )
+            pages.append(
+                PageAsset(
+                    page=story_page,
+                    scene=scene,
+                    image_outputs=image_outputs,
+                    image_metadata=dict(metadata) if isinstance(metadata, Mapping) else None,
+                )
+            )
 
         return cls(profile=profile, story_markdown=story_markdown, pages=pages)
 
@@ -310,14 +331,21 @@ class KidBookAIOrchestrator:
                     directives.reference_history_parameter
                 ] = list(directives.additional_reference_images)
 
-            image_outputs = self._invoke_image_generation(
+            image_outputs, generation_metadata = self._invoke_image_generation(
                 profile=profile,
                 scene=scene,
                 reference_image=directives.primary_reference_image,
                 continuity_directives=directives,
                 image_kwargs=page_image_kwargs,
             )
-            assets.append(PageAsset(page=page, scene=scene, image_outputs=image_outputs))
+            assets.append(
+                PageAsset(
+                    page=page,
+                    scene=scene,
+                    image_outputs=image_outputs,
+                    image_metadata=generation_metadata,
+                )
+            )
             continuity_state.record_generation(scene=scene, image_outputs=image_outputs)
             self._notify(
                 progress_callback,
@@ -336,7 +364,7 @@ class KidBookAIOrchestrator:
         reference_image: str | Path,
         image_kwargs: Mapping[str, Any],
         continuity_directives: GenerationContinuityDirectives,
-    ) -> Sequence[str]:
+    ) -> tuple[Sequence[str], Mapping[str, Any]]:
         model_kwargs = dict(image_kwargs)
         camera_shot = model_kwargs.pop("camera_shot", None)
 
@@ -350,7 +378,31 @@ class KidBookAIOrchestrator:
             supporting_cast_notes=continuity_directives.supporting_cast_notes,
             **model_kwargs,
         )
-        return normalize_image_outputs(outputs)
+        normalized_outputs = normalize_image_outputs(outputs)
+        metadata: dict[str, Any] = {
+            "seed": model_kwargs.get("seed"),
+            "identity_traits": continuity_directives.identity_notes,
+            "continuity_notes": list(continuity_directives.continuity_notes),
+            "supporting_cast_notes": list(continuity_directives.supporting_cast_notes),
+            "reference_image": str(reference_image),
+        }
+        if continuity_directives.additional_reference_images:
+            metadata["additional_reference_images"] = [
+                str(ref) for ref in continuity_directives.additional_reference_images
+            ]
+        if continuity_directives.reference_history_parameter:
+            metadata["reference_history_parameter"] = (
+                continuity_directives.reference_history_parameter
+            )
+            history_value = model_kwargs.get(
+                continuity_directives.reference_history_parameter
+            )
+            if history_value is not None:
+                if isinstance(history_value, (list, tuple)):
+                    metadata["reference_history"] = list(history_value)
+                else:
+                    metadata["reference_history"] = [history_value]
+        return normalized_outputs, metadata
 
     @staticmethod
     def _notify(

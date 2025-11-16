@@ -4,7 +4,7 @@ Structured representations of the personalized kid information gathered from the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -38,6 +38,88 @@ def _coerce_optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Expected an integer-compatible value for age, got {value!r}") from exc
+
+
+def _normalize_supporting_characters(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+
+    def _add_entry(
+        target: dict[str, str],
+        name: Any,
+        description: Any,
+    ) -> None:
+        name_text = str(name).strip() if name is not None else ""
+        desc_text = str(description).strip() if description is not None else ""
+        if name_text and desc_text:
+            target[name_text] = desc_text
+
+    if isinstance(value, Mapping):
+        result: dict[str, str] = {}
+        for name, details in value.items():
+            if isinstance(details, Mapping):
+                description = details.get("description") or details.get("notes")
+                _add_entry(result, name, description)
+            else:
+                _add_entry(result, name, details)
+        return result
+
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        result: dict[str, str] = {}
+        for item in value:
+            if isinstance(item, Mapping):
+                name = item.get("name")
+                description = item.get("description") or item.get("notes")
+                _add_entry(result, name, description)
+            elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
+                if len(item) >= 2:
+                    _add_entry(result, item[0], item[1])
+            elif isinstance(item, str):
+                if ":" in item:
+                    name, description = item.split(":", 1)
+                    _add_entry(result, name, description)
+        return result
+
+    if isinstance(value, str):
+        result: dict[str, str] = {}
+        for line in value.replace("\r", "\n").split("\n"):
+            if ":" in line:
+                name, description = line.split(":", 1)
+                _add_entry(result, name, description)
+        return result
+
+    raise TypeError("supporting_characters must be a mapping, sequence, or colon-delimited string.")
+
+
+def _normalize_continuity_notes(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+
+    def _normalize_string(text: str) -> list[str]:
+        normalized: list[str] = []
+        for raw in text.replace("\r", "\n").split("\n"):
+            cleaned = raw.strip(" \t-•—")
+            if cleaned:
+                normalized.append(cleaned)
+        return normalized
+
+    if isinstance(value, str):
+        return tuple(_normalize_string(value))
+
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        notes: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                notes.extend(_normalize_string(item))
+            elif isinstance(item, Mapping):
+                description = item.get("description") or item.get("note") or item.get("value")
+                if isinstance(description, str):
+                    notes.extend(_normalize_string(description))
+            elif item is not None:
+                notes.extend(_normalize_string(str(item)))
+        return tuple(notes)
+
+    return tuple(_normalize_string(str(value)))
 
 
 @dataclass(frozen=True)
@@ -79,6 +161,9 @@ class KidProfile:
     personal_notes: str | None = None
     story_language: str = "English"
     guardian_name: str | None = None
+    identity_traits: str | None = None
+    supporting_characters: Mapping[str, str] = field(default_factory=dict)
+    continuity_notes: tuple[str, ...] = ()
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "KidProfile":
@@ -114,6 +199,20 @@ class KidProfile:
                 or data.get("parent_name")
                 or data.get("caregiver_name")
             ),
+            identity_traits=_coerce_optional_str(
+                data.get("identity_traits")
+                or data.get("visual_identity_notes")
+                or data.get("identity_notes")
+            ),
+            supporting_characters=_normalize_supporting_characters(
+                data.get("supporting_characters")
+                or data.get("recurring_characters")
+            ),
+            continuity_notes=_normalize_continuity_notes(
+                data.get("continuity_notes")
+                or data.get("wardrobe_notes")
+                or data.get("visual_continuity_notes")
+            ),
         )
 
     def context_bullets(self) -> list[str]:
@@ -146,6 +245,13 @@ class KidProfile:
 
         if self.guardian_name:
             bullets.append(f"Guardian name: {self.guardian_name}")
+
+        if self.identity_traits:
+            bullets.append(f"Identity traits: {self.identity_traits}")
+
+        if self.continuity_notes:
+            for note in self.continuity_notes:
+                bullets.append(f"Continuity note: {note}")
 
         bullets.append(f"Story language: {self.story_language}")
 

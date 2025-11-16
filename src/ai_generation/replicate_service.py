@@ -123,7 +123,10 @@ class ReplicateImageGenerator:
                     if negative_prompt_override is not None
                     else prompt.negative
                 ),
-                "image": image_input,
+                "input_image": image_input,
+                "output_format": "png",
+                "safety_tolerance": 3,
+                "prompt_upsampling": True,
             }
 
             if reference_image_history:

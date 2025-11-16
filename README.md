@@ -71,6 +71,7 @@ child's reference photo into scene-specific, storybook-quality illustrations.
       ],
       reference_history_size=3,
       promote_latest_reference=True,
+      vary_seed_per_page=False,  # opt into per-page variation by setting True
   )
 
   orchestrator = KidBookAIOrchestrator(continuity_config=continuity)
@@ -82,8 +83,29 @@ child's reference photo into scene-specific, storybook-quality illustrations.
   ```
 
   The orchestrator now threads the identity snapshot into every prompt, reuses
-  prior illustration URLs as extra references, and keeps deterministic seeds
-  stable unless you override them in `image_kwargs`.
+  prior illustration URLs as extra references, and keeps a single deterministic
+  seed per story unless you override it in `image_kwargs` or enable
+  `vary_seed_per_page`.
+
+#### CLI usage
+
+`scripts/run_full_pipeline.py` now assembles this configuration automatically:
+
+- `--auto-identity-notes / --no-auto-identity-notes` toggle a vision pass that
+  extracts bullet-point traits from the reference portrait (default: on).
+- `--identity-model` and `--identity-api-key` override the multimodal model and
+  credential used for extraction.
+- `--identity-note` adds manual identity bullets; repeat the flag to add more.
+- `--supporting-character NAME=DESCRIPTION` injects or overrides recurring cast.
+- `--continuity-note` adds wardrobe/prop reminders that apply to every scene.
+- `--reference-history-size` and `--reference-history-param` tune how many prior
+  illustrations are recycled and which model parameter receives them.
+- `--promote-latest-reference / --no-promote-latest-reference` control whether
+  the freshest illustration becomes the next primary reference.
+
+The generated `kidbook_package.yaml` now stores per-page `image_metadata`
+capturing the seed, identity cues, supporting cast notes, and the reference
+images used during generation so you can audit continuity later.
 
 > **Note:** The Replicate model chosen should support identity-preserving
 > image-to-image editing (e.g., InstantID-based workflows).

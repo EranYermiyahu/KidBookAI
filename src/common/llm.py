@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
 from litellm import completion
 
-ChatMessage = Mapping[str, str]
+ChatMessage = Mapping[str, Any]
 
 
 @dataclass
