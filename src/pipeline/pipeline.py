@@ -46,6 +46,9 @@ class PageAsset:
             "title": self.page.title,
             "story_text": self.page.story_text,
             "scene_description": self.scene.scene_description,
+            "outfit_description": self.scene.outfit_description,
+            "facial_expression": self.scene.facial_expression,
+            "pose_description": self.scene.pose_description,
             "supporting_details": self.scene.supporting_details,
             "image_outputs": list(self.image_outputs),
             **(
@@ -112,6 +115,9 @@ class StoryPackage:
             scene = SceneDescription(
                 page_number=page_number,
                 scene_description=str(entry.get("scene_description", "")).strip(),
+                outfit_description=str(entry.get("outfit_description", "")).strip(),
+                facial_expression=str(entry.get("facial_expression", "")).strip(),
+                pose_description=str(entry.get("pose_description", "")).strip(),
                 supporting_details=str(entry.get("supporting_details", "")).strip(),
             )
             raw_outputs = entry.get("image_outputs", [])
@@ -371,6 +377,10 @@ class KidBookAIOrchestrator:
         outputs = self._image_generator.generate_image(
             kid_name=profile.name,
             scene_description=scene.scene_description,
+            favorite_theme=profile.favorite_theme,
+            outfit_description=scene.outfit_description,
+            facial_expression=scene.facial_expression,
+            pose_description=scene.pose_description,
             input_image=reference_image,
             camera_shot=camera_shot,
             identity_traits=continuity_directives.identity_notes,
@@ -386,6 +396,12 @@ class KidBookAIOrchestrator:
             "supporting_cast_notes": list(continuity_directives.supporting_cast_notes),
             "reference_image": str(reference_image),
         }
+        if profile.favorite_theme:
+            metadata["favorite_theme"] = profile.favorite_theme
+        if scene.facial_expression:
+            metadata["facial_expression"] = scene.facial_expression
+        if scene.pose_description:
+            metadata["pose_description"] = scene.pose_description
         if continuity_directives.additional_reference_images:
             metadata["additional_reference_images"] = [
                 str(ref) for ref in continuity_directives.additional_reference_images

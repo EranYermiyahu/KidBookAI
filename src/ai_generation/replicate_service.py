@@ -7,11 +7,82 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, Mapping, Sequence
+from typing import Any, BinaryIO, Callable, Iterable, Mapping, Sequence
 
 import replicate
 
 from .prompting import StorybookPrompt, build_storybook_prompt
+
+
+def _build_instant_id_input(
+    *,
+    prompt: StorybookPrompt,
+    negative_prompt: str,
+    image_input: str | BinaryIO,
+) -> dict[str, Any]:
+    return {
+        "prompt": prompt.positive,
+        "negative_prompt": negative_prompt,
+        "image": image_input,
+        "output_format": "png",
+        "sdxl_weights": "protovision-xl-high-fidel",
+        "guidance_scale": 5,
+        # "num_inference_steps": 50,
+        # "ip_adapter_scale": 1.1,
+        # "controlnet_conditioning_scale": 1.1,
+        # "output_quality": 95,
+    }
+
+
+def _build_flux_kontext_input(
+    *,
+    prompt: StorybookPrompt,
+    negative_prompt: str,
+    image_input: str | BinaryIO,
+) -> dict[str, Any]:
+    return {
+        "prompt": prompt.positive,
+        "negative_prompt": negative_prompt,
+        "input_image": image_input,
+        "output_format": "png",
+        "safety_tolerance": 2,
+        "prompt_upsampling": True,
+        "aspect_ratio": "1:1",
+    }
+
+
+_MODEL_INPUT_BUILDERS: dict[str, Callable[..., dict[str, Any]]] = {
+    "zsxkib/instant-id": _build_instant_id_input,
+    "zsxkib/instant-id:2e4785a4d80dadf580077b2244c8d7c05d8e3faac04a04c02d8e099dd2876789": _build_instant_id_input,
+    "black-forest-labs/flux-kontext-pro": _build_flux_kontext_input,
+}
+
+
+def _build_replicate_input_payload(
+    *,
+    model_identifier: str,
+    prompt: StorybookPrompt,
+    negative_prompt: str,
+    image_input: str | BinaryIO,
+) -> dict[str, Any]:
+    normalized_identifier = model_identifier.strip().lower()
+    builder = _MODEL_INPUT_BUILDERS.get(normalized_identifier)
+    if builder is None and ":" in normalized_identifier:
+        base_identifier = normalized_identifier.split(":", maxsplit=1)[0]
+        builder = _MODEL_INPUT_BUILDERS.get(base_identifier)
+    if builder is None:
+        supported_models = ", ".join(sorted(set(_MODEL_INPUT_BUILDERS)))
+        raise ValueError(
+            "Model identifier "
+            f"'{model_identifier}' is not configured with a default input payload. "
+            f"Supported models: {supported_models}."
+        )
+
+    return builder(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        image_input=image_input,
+    )
 
 
 class ReplicateImageGenerator:
@@ -62,6 +133,10 @@ class ReplicateImageGenerator:
         *,
         kid_name: str,
         scene_description: str,
+        favorite_theme: str | Sequence[str] | None = None,
+        outfit_description: str | None = None,
+        facial_expression: str | Sequence[str] | None = None,
+        pose_description: str | Sequence[str] | None = None,
         input_image: str | Path | BinaryIO,
         camera_shot: str | None = None,
         negative_prompt_override: str | None = None,
@@ -80,6 +155,17 @@ class ReplicateImageGenerator:
             Name of the child featuring in the scene.
         scene_description:
             Narrative description of the scene to render.
+        favorite_theme:
+            Optional thematic guidance (e.g., "Superhero adventures") that should color
+            the scene's overall style, palette, and wardrobe motifs.
+        outfit_description:
+            Wardrobe guidance inferred for this page. Clothing should follow this
+            description rather than the reference photo.
+        facial_expression:
+            Optional prescribed facial expression cues tailoring the child's emotion
+            to this moment in the story.
+        pose_description:
+            Optional pose or body-language guidance aligned with the scene action.
         input_image:
             Either a local file path, URL, or binary file-like object pointing to the kid's reference image.
         camera_shot:
@@ -108,6 +194,10 @@ class ReplicateImageGenerator:
             kid_name=kid_name,
             scene_description=scene_description,
             camera_shot=camera_shot,
+            favorite_theme=favorite_theme,
+            outfit_description=outfit_description,
+            facial_expression=facial_expression,
+            pose_description=pose_description,
             identity_traits=identity_traits,
             continuity_notes=continuity_notes,
             supporting_cast_notes=supporting_cast_notes,
@@ -116,18 +206,18 @@ class ReplicateImageGenerator:
         with ExitStack() as stack:
             image_input = _prepare_image_input(input_image, stack=stack)
 
-            replicate_input: dict[str, Any] = {
-                "prompt": prompt.positive,
-                "negative_prompt": (
-                    negative_prompt_override
-                    if negative_prompt_override is not None
-                    else prompt.negative
-                ),
-                "input_image": image_input,
-                "output_format": "png",
-                "safety_tolerance": 3,
-                "prompt_upsampling": True,
-            }
+            negative_prompt = (
+                negative_prompt_override
+                if negative_prompt_override is not None
+                else prompt.negative
+            )
+
+            replicate_input = _build_replicate_input_payload(
+                model_identifier=self._model_identifier,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                image_input=image_input,
+            )
 
             if reference_image_history:
                 replicate_input["reference_image_history"] = [
